@@ -89,7 +89,7 @@ if (!empty($tmdb_id)) {
 
 // ==================== MODO 2: PROXY DIRETO (Mais importante) ====================
 if (!empty($url_direta)) {
-    $result = curlGet($url_direta, 'https://d1muf25xa06so8hp24v.megaembed.com/');
+    $result = curlGet($url_direta, 'https://megaembed.com/');
 
     if ($result['success'] && !empty($result['content'])) {
         
