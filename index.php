@@ -10,7 +10,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
-const TIMEOUT = 30;
+define('TIMEOUT', 30);
+
+define(
+    'USER_AGENT',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36'
+);
 
 function resposta($dados, $codigo = 200)
 {
@@ -25,48 +30,44 @@ function resposta($dados, $codigo = 200)
     exit;
 }
 
-function buscarPagina($url)
+function curlGet($url, $referer = '')
 {
-    $ch = curl_init();
+    $headers = [
+        'User-Agent: ' . USER_AGENT,
+        'Accept: */*',
+        'Accept-Language: pt-BR,pt;q=0.9,en;q=0.8',
+        'Connection: keep-alive'
+    ];
+
+    if (!empty($referer)) {
+        $headers[] = 'Referer: ' . $referer;
+    }
+
+    $ch = curl_init($url);
 
     curl_setopt_array($ch, [
-        CURLOPT_URL => $url,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => TIMEOUT,
         CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_ENCODING => '',
-        CURLOPT_HTTPHEADER => [
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
-            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language: pt-BR,pt;q=0.9,en;q=0.8'
-        ]
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_ENCODING => ''
     ]);
 
-    $html = curl_exec($ch);
+    $response = curl_exec($ch);
 
-    $erro = curl_error($ch);
-    $codigo = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
 
     curl_close($ch);
 
-    if ($html === false) {
-        return [
-            'success' => false,
-            'error' => $erro
-        ];
-    }
-
-    if ($codigo < 200 || $codigo >= 400) {
-        return [
-            'success' => false,
-            'error' => 'HTTP ' . $codigo
-        ];
-    }
-
     return [
-        'success' => true,
-        'html' => $html
+        'success' => ($response !== false && $httpCode >= 200 && $httpCode < 400),
+        'content' => $response,
+        'code' => $httpCode,
+        'error' => $error
     ];
 }
 
@@ -103,16 +104,21 @@ function extrairSources($html)
                 continue;
             }
 
-            $file = trim($source['file'] ?? '');
-
-            if ($file === '') {
+            if (empty($source['file'])) {
                 continue;
             }
 
             $resultado[] = [
-                'file' => $file,
-                'type' => $source['type'] ?? null,
-                'label' => $source['label'] ?? null
+                'file' => $source['file'],
+                'label' => $source['label'] ?? 'Servidor ' . (count($resultado) + 1),
+                'type' => $source['type'] ?? (
+                    str_contains(
+                        strtolower($source['file']),
+                        '.m3u8'
+                    )
+                        ? 'hls'
+                        : 'mp4'
+                )
             ];
         }
 
@@ -124,57 +130,110 @@ function extrairSources($html)
     return [];
 }
 
-$url = trim($_GET['url'] ?? '');
+$tmdb_id = trim($_GET['tmdb_id'] ?? '');
+$url_direta = trim($_GET['url'] ?? '');
 
-if ($url === '') {
+if (!empty($tmdb_id)) {
+
+    if (!preg_match('/^[0-9]+$/', $tmdb_id)) {
+        resposta([
+            'success' => false,
+            'message' => 'TMDB ID inválido.'
+        ], 400);
+    }
+
+    $embedUrl = 'https://megaembed.com/embed/' . $tmdb_id;
+
+    $data = curlGet(
+        $embedUrl,
+        'https://megaembed.com/'
+    );
+
+    if (!$data['success'] || empty($data['content'])) {
+
+        resposta([
+            'success' => false,
+            'message' => 'Erro ao acessar o embed.',
+            'code' => $data['code'],
+            'error' => $data['error']
+        ], 502);
+    }
+
+    $sources = extrairSources($data['content']);
+
+    if (empty($sources)) {
+
+        resposta([
+            'success' => false,
+            'message' => 'Nenhuma fonte encontrada.',
+            'sources' => [],
+            'total' => 0
+        ], 404);
+    }
+
     resposta([
-        'success' => false,
-        'message' => 'Informe a URL da página.'
-    ], 400);
+        'success' => true,
+        'sources' => $sources,
+        'total' => count($sources)
+    ]);
 }
 
-if (!filter_var($url, FILTER_VALIDATE_URL)) {
-    resposta([
-        'success' => false,
-        'message' => 'URL inválida.'
-    ], 400);
-}
+if (!empty($url_direta)) {
 
-$pagina = buscarPagina($url);
+    if (!filter_var($url_direta, FILTER_VALIDATE_URL)) {
 
-if (!$pagina['success']) {
-    resposta([
-        'success' => false,
-        'message' => 'Não foi possível acessar a página.',
-        'error' => $pagina['error']
-    ], 502);
-}
+        resposta([
+            'success' => false,
+            'message' => 'URL inválida.'
+        ], 400);
+    }
 
-$sources = extrairSources($pagina['html']);
+    $result = curlGet(
+        $url_direta,
+        'https://megaembed.com/'
+    );
 
-if (empty($sources)) {
-    resposta([
-        'success' => false,
-        'message' => 'A variável sources não foi encontrada ou não contém fontes válidas.',
-        'sources' => []
-    ], 404);
-}
+    if (!$result['success'] || empty($result['content'])) {
 
-$resposta = [];
+        resposta([
+            'success' => false,
+            'message' => 'Falha ao carregar o vídeo.',
+            'code' => $result['code'],
+            'error' => $result['error']
+        ], 404);
+    }
 
-foreach ($sources as $index => $source) {
+    if (
+        str_contains(
+            strtolower($url_direta),
+            '.m3u8'
+        )
+    ) {
 
-    $resposta[] = [
-        'index' => $index,
-        'file' => $source['file'],
-        'type' => $source['type'],
-        'label' => $source['label'] ?: 'Servidor ' . ($index + 1)
-    ];
+        header(
+            'Content-Type: application/vnd.apple.mpegurl'
+        );
+
+        echo $result['content'];
+
+        exit;
+    }
+
+    header('Content-Type: video/mp4');
+
+    header(
+        'Content-Length: ' .
+        strlen($result['content'])
+    );
+
+    echo $result['content'];
+
+    exit;
 }
 
 resposta([
-    'success' => true,
-    'total' => count($resposta),
-    'sources' => $resposta
-]);
+    'success' => false,
+    'message' => 'Use ?tmdb_id=ID ou ?url=LINK_DO_VIDEO'
+], 400);
+
 ?>
