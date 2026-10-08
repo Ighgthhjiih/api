@@ -1,9 +1,9 @@
 <?php
 
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization');
 header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
@@ -12,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 /*
 |--------------------------------------------------------------------------
-| CONFIGURAÇÃO
+| CONFIGURAÇÕES
 |--------------------------------------------------------------------------
 */
 
@@ -21,7 +21,7 @@ const TIMEOUT = 30;
 const USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' .
     'AppleWebKit/537.36 (KHTML, like Gecko) ' .
-    'Chrome/131.0.0.0 Safari/537.36';
+    'Chrome/154.0.0.0 Safari/537.36';
 
 /*
 |--------------------------------------------------------------------------
@@ -29,33 +29,41 @@ const USER_AGENT =
 |--------------------------------------------------------------------------
 */
 
-$debug = [];
+$debug = isset($_GET['debug']) && $_GET['debug'] == '1';
 
-function logDebug(string $mensagem, $dados = null): void
+$logs = [];
+
+function logDebug($mensagem, $dados = null)
 {
-    global $debug;
+    global $logs;
 
     $item = [
-        'hora' => date('Y-m-d H:i:s'),
-        'mensagem' => $mensagem
+        'time' => date('H:i:s'),
+        'message' => $mensagem
     ];
 
     if ($dados !== null) {
-        $item['dados'] = $dados;
+        $item['data'] = $dados;
     }
 
-    $debug[] = $item;
+    $logs[] = $item;
 }
 
-function resposta(array $dados, int $httpCode = 200): void
+function resposta($dados, $status = 200)
 {
-    http_response_code($httpCode);
+    global $debug, $logs;
+
+    http_response_code($status);
+
+    if ($debug) {
+        $dados['debug'] = $logs;
+    }
 
     echo json_encode(
         $dados,
+        JSON_PRETTY_PRINT |
         JSON_UNESCAPED_UNICODE |
-        JSON_UNESCAPED_SLASHES |
-        JSON_PRETTY_PRINT
+        JSON_UNESCAPED_SLASHES
     );
 
     exit;
@@ -63,27 +71,27 @@ function resposta(array $dados, int $httpCode = 200): void
 
 /*
 |--------------------------------------------------------------------------
-| DETECÇÃO DE CLOUDFLARE
+| DETECTAR CLOUDFLARE
 |--------------------------------------------------------------------------
 */
 
-function detectarCloudflare(string $html, int $httpCode): bool
+function detectarCloudflare($html, $httpCode)
 {
-    if ($httpCode === 403) {
+    if ($httpCode == 403) {
         return true;
     }
 
     $indicadores = [
         'Just a moment',
         'Enable JavaScript and cookies to continue',
-        'challenge-platform',
         'challenges.cloudflare.com',
         '_cf_chl_opt',
-        'cf-ray',
+        'cf-chl',
         'Cloudflare'
     ];
 
     foreach ($indicadores as $indicador) {
+
         if (stripos($html, $indicador) !== false) {
             return true;
         }
@@ -94,32 +102,39 @@ function detectarCloudflare(string $html, int $httpCode): bool
 
 /*
 |--------------------------------------------------------------------------
-| cURL
+| CURL GET
 |--------------------------------------------------------------------------
 */
 
-function curlGet(string $url, string $referer = ''): array
+function curlGet($url, $referer = null)
 {
-    logDebug('curlGet() iniciou', [
-        'url' => $url,
-        'referer' => $referer
+    logDebug('Iniciando requisição cURL', [
+        'url' => $url
     ]);
 
     if (!filter_var($url, FILTER_VALIDATE_URL)) {
 
-        logDebug('ERRO: URL inválida', [
-            'url' => $url
-        ]);
+        logDebug('URL inválida');
 
         return [
             'success' => false,
-            'content' => '',
-            'code' => 0,
             'error' => 'URL inválida',
-            'cloudflare' => false,
-            'content_type' => '',
-            'final_url' => '',
-            'time' => 0
+            'http_code' => 0,
+            'content' => ''
+        ];
+    }
+
+    $ch = curl_init();
+
+    if (!$ch) {
+
+        logDebug('Falha ao inicializar cURL');
+
+        return [
+            'success' => false,
+            'error' => 'Não foi possível inicializar cURL',
+            'http_code' => 0,
+            'content' => ''
         ];
     }
 
@@ -127,35 +142,16 @@ function curlGet(string $url, string $referer = ''): array
         'User-Agent: ' . USER_AGENT,
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding: gzip, deflate',
         'Connection: keep-alive'
     ];
 
-    if ($referer !== '') {
+    if ($referer) {
         $headers[] = 'Referer: ' . $referer;
 
         logDebug('Referer configurado', [
             'referer' => $referer
         ]);
-    }
-
-    logDebug('Inicializando cURL');
-
-    $ch = curl_init();
-
-    if ($ch === false) {
-
-        logDebug('ERRO: curl_init() falhou');
-
-        return [
-            'success' => false,
-            'content' => '',
-            'code' => 0,
-            'error' => 'curl_init falhou',
-            'cloudflare' => false,
-            'content_type' => '',
-            'final_url' => '',
-            'time' => 0
-        ];
     }
 
     curl_setopt_array($ch, [
@@ -180,338 +176,230 @@ function curlGet(string $url, string $referer = ''): array
 
         CURLOPT_SSL_VERIFYHOST => 2,
 
-        CURLOPT_HEADER => false
+        CURLOPT_HEADER => false,
 
     ]);
 
-    logDebug('Opções do cURL configuradas');
+    logDebug('cURL configurado');
 
     $inicio = microtime(true);
 
-    logDebug('Executando curl_exec()');
+    $content = curl_exec($ch);
 
-    $response = curl_exec($ch);
+    $tempo = round(microtime(true) - $inicio, 3);
 
-    $tempo = microtime(true) - $inicio;
-
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-    $contentType = curl_getinfo(
-        $ch,
-        CURLINFO_CONTENT_TYPE
-    );
-
-    $finalUrl = curl_getinfo(
-        $ch,
-        CURLINFO_EFFECTIVE_URL
-    );
-
-    $totalTime = curl_getinfo(
-        $ch,
-        CURLINFO_TOTAL_TIME
-    );
-
+    $errno = curl_errno($ch);
     $error = curl_error($ch);
 
-    $errorNumber = curl_errno($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
 
     curl_close($ch);
 
-    $content = ($response !== false)
-        ? $response
-        : '';
+    $tamanho = strlen($content ?: '');
 
-    $cloudflare = detectarCloudflare(
-        $content,
-        $httpCode
-    );
-
-    logDebug('curl_exec() terminou', [
+    logDebug('cURL finalizado', [
         'http_code' => $httpCode,
         'content_type' => $contentType,
         'final_url' => $finalUrl,
-        'tempo' => round($tempo, 4),
-        'curl_errno' => $errorNumber,
+        'tempo' => $tempo,
+        'curl_errno' => $errno,
         'curl_error' => $error,
-        'tamanho_resposta' => strlen($content),
-        'cloudflare_detectado' => $cloudflare
+        'content_size' => $tamanho
     ]);
 
-    if ($response === false) {
+    if ($errno !== 0) {
 
-        logDebug('ERRO: curl_exec() retornou false', [
-            'curl_errno' => $errorNumber,
-            'curl_error' => $error
+        logDebug('Erro de transporte do cURL', [
+            'errno' => $errno,
+            'error' => $error
         ]);
 
         return [
             'success' => false,
-            'content' => '',
-            'code' => $httpCode,
             'error' => $error,
-            'cloudflare' => false,
+            'http_code' => $httpCode,
+            'content' => $content ?: '',
             'content_type' => $contentType,
             'final_url' => $finalUrl,
-            'time' => $totalTime
+            'time' => $tempo
         ];
     }
 
-    if ($cloudflare) {
-
-        logDebug(
-            'CLOUDFLARE DETECTADO: resposta não contém o HTML real do embed',
-            [
-                'http_code' => $httpCode,
-                'content_size' => strlen($content)
-            ]
-        );
-    }
-
-    $success = (
-        $httpCode >= 200 &&
-        $httpCode < 400 &&
-        !$cloudflare
+    $cloudflare = detectarCloudflare(
+        $content ?: '',
+        $httpCode
     );
 
-    if ($success) {
-
-        logDebug('Resposta HTTP válida e HTML aparentemente acessível');
-
-    } else {
-
-        logDebug('Resposta não pode ser processada como HTML do embed', [
-            'http_code' => $httpCode,
-            'cloudflare' => $cloudflare
-        ]);
-    }
-
-    return [
-        'success' => $success,
-        'content' => $content,
-        'code' => $httpCode,
-        'error' => $error,
-        'cloudflare' => $cloudflare,
-        'content_type' => $contentType,
-        'final_url' => $finalUrl,
-        'time' => $totalTime
-    ];
-}
-
-/*
-|--------------------------------------------------------------------------
-| EXTRAÇÃO DE SOURCES
-|--------------------------------------------------------------------------
-*/
-
-function extrairSources(string $html): array
-{
-    logDebug('Iniciando procura por sources');
-
-    $sources = [];
-
-    /*
-     * Aceita:
-     *
-     * var sources = [...]
-     * let sources = [...]
-     * const sources = [...]
-     */
-
-    $padroes = [
-
-        '/(?:var|let|const)\s+sources\s*=\s*(\[[\s\S]*?\])\s*;/i',
-
-        '/sources\s*=\s*(\[[\s\S]*?\])\s*;/i'
-
-    ];
-
-    $encontrou = false;
-
-    foreach ($padroes as $indice => $padrao) {
-
-        logDebug('Testando regex', [
-            'indice' => $indice,
-            'regex' => $padrao
-        ]);
-
-        $resultado = preg_match(
-            $padrao,
-            $html,
-            $matches
-        );
-
-        if ($resultado === false) {
-
-            logDebug('Erro interno no preg_match()', [
-                'indice' => $indice,
-                'erro' => preg_last_error_msg()
-            ]);
-
-            continue;
-        }
-
-        if ($resultado === 1) {
-
-            $encontrou = true;
-
-            logDebug('Variável sources encontrada', [
-                'regex' => $indice,
-                'tamanho' => strlen($matches[1] ?? '')
-            ]);
-
-            $jsonSources = $matches[1] ?? '';
-
-            /*
-             * Tentativa normal
-             */
-
-            $decoded = json_decode(
-                $jsonSources,
-                true
-            );
-
-            /*
-             * Caso o conteúdo use aspas simples,
-             * não tentamos executar JavaScript.
-             * Apenas registramos o problema.
-             */
-
-            if (!is_array($decoded)) {
-
-                logDebug(
-                    'sources encontrada, mas não foi possível interpretar como JSON',
-                    [
-                        'json_error' => json_last_error_msg(),
-                        'inicio' => substr(
-                            $jsonSources,
-                            0,
-                            300
-                        )
-                    ]
-                );
-
-                continue;
-            }
-
-            logDebug('sources convertida para array', [
-                'quantidade' => count($decoded)
-            ]);
-
-            foreach ($decoded as $index => $item) {
-
-                logDebug('Processando source', [
-                    'index' => $index
-                ]);
-
-                if (!is_array($item)) {
-
-                    logDebug('Source ignorada: não é objeto');
-
-                    continue;
-                }
-
-                if (empty($item['file'])) {
-
-                    logDebug(
-                        'Source ignorada: campo file ausente'
-                    );
-
-                    continue;
-                }
-
-                $file = trim(
-                    (string)$item['file']
-                );
-
-                if (!filter_var($file, FILTER_VALIDATE_URL)) {
-
-                    logDebug(
-                        'Source ignorada: file não é URL válida',
-                        [
-                            'file' => $file
-                        ]
-                    );
-
-                    continue;
-                }
-
-                $label = $item['label']
-                    ?? ('Servidor ' . (count($sources) + 1));
-
-                $tipo = 'mp4';
-
-                if (
-                    stripos($file, '.m3u8') !== false
-                ) {
-                    $tipo = 'hls';
-                }
-
-                $sources[] = [
-                    'file' => $file,
-                    'label' => $label,
-                    'type' => $tipo
-                ];
-
-                logDebug('Source válida adicionada', [
-                    'index' => $index,
-                    'label' => $label,
-                    'type' => $tipo
-                ]);
-            }
-
-            /*
-             * Se encontrou sources válidas,
-             * não precisa testar outra regex.
-             */
-
-            if (!empty($sources)) {
-                break;
-            }
-        }
-    }
-
-    if (!$encontrou) {
-
-        logDebug(
-            'Nenhuma variável sources foi encontrada no HTML'
-        );
-    }
-
-    logDebug('Extração finalizada', [
-        'total_sources' => count($sources)
+    logDebug('Resultado da detecção de proteção', [
+        'cloudflare_detected' => $cloudflare
     ]);
 
-    return $sources;
+    return [
+        'success' => true,
+        'error' => null,
+        'http_code' => $httpCode,
+        'content' => $content ?: '',
+        'content_type' => $contentType,
+        'final_url' => $finalUrl,
+        'time' => $tempo,
+        'cloudflare' => $cloudflare
+    ];
 }
 
 /*
 |--------------------------------------------------------------------------
-| PARÂMETROS
+| EXTRAIR SOURCES
 |--------------------------------------------------------------------------
 */
 
-logDebug('PHP iniciou a execução');
+function extrairSources($html)
+{
+    logDebug('Iniciando procura pela variável sources');
 
-logDebug('Lendo parâmetros GET');
+    if (!$html) {
 
-$tmdb_id = trim(
-    $_GET['tmdb_id'] ?? ''
-);
+        logDebug('HTML vazio');
 
-$url_direta = trim(
-    $_GET['url'] ?? ''
-);
+        return [
+            'success' => false,
+            'reason' => 'empty_html',
+            'sources' => []
+        ];
+    }
 
-$debugMode = (
-    isset($_GET['debug']) &&
-    $_GET['debug'] === '1'
-);
+    /*
+    |--------------------------------------------------------------------------
+    | MÉTODO 1
+    | var sources = [...]
+    |--------------------------------------------------------------------------
+    */
+
+    $padrao1 = '/var\s+sources\s*=\s*(\[[\s\S]*?\]);/i';
+
+    if (preg_match($padrao1, $html, $match)) {
+
+        logDebug('Variável "sources" encontrada pelo padrão 1');
+
+        $json = trim($match[1]);
+
+        $sources = json_decode($json, true);
+
+        if (json_last_error() === JSON_ERROR_NONE) {
+
+            logDebug('JSON de sources decodificado corretamente', [
+                'quantidade' => count($sources)
+            ]);
+
+            return [
+                'success' => true,
+                'method' => 'var_sources',
+                'sources' => $sources
+            ];
+        }
+
+        logDebug('sources encontrada, mas JSON inválido', [
+            'json_error' => json_last_error_msg()
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | MÉTODO 2
+    | window.sources = [...]
+    |--------------------------------------------------------------------------
+    */
+
+    $padrao2 = '/window\.sources\s*=\s*(\[[\s\S]*?\]);/i';
+
+    if (preg_match($padrao2, $html, $match)) {
+
+        logDebug('Variável "window.sources" encontrada');
+
+        $json = trim($match[1]);
+
+        $sources = json_decode($json, true);
+
+        if (json_last_error() === JSON_ERROR_NONE) {
+
+            logDebug('window.sources decodificado corretamente');
+
+            return [
+                'success' => true,
+                'method' => 'window_sources',
+                'sources' => $sources
+            ];
+        }
+
+        logDebug('window.sources encontrada, mas JSON inválido');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | MÉTODO 3
+    | Procurar apenas pela palavra sources
+    |--------------------------------------------------------------------------
+    */
+
+    if (stripos($html, 'sources') !== false) {
+
+        logDebug('A palavra "sources" existe no HTML, mas o padrão esperado não foi encontrado');
+
+        return [
+            'success' => false,
+            'reason' => 'sources_found_but_not_parsed',
+            'sources' => []
+        ];
+    }
+
+    logDebug('Nenhuma variável sources encontrada');
+
+    return [
+        'success' => false,
+        'reason' => 'sources_not_found',
+        'sources' => []
+    ];
+}
+
+/*
+|--------------------------------------------------------------------------
+| INÍCIO
+|--------------------------------------------------------------------------
+*/
+
+logDebug('PHP iniciado');
+
+$tmdbId = isset($_GET['tmdb_id'])
+    ? trim($_GET['tmdb_id'])
+    : '';
+
+$url = isset($_GET['url'])
+    ? trim($_GET['url'])
+    : '';
 
 logDebug('Parâmetros recebidos', [
-    'tmdb_id' => $tmdb_id,
-    'url' => $url_direta,
-    'debug' => $debugMode
+    'tmdb_id' => $tmdbId,
+    'url' => $url,
+    'debug' => $debug
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| VALIDAÇÃO
+|--------------------------------------------------------------------------
+*/
+
+if ($tmdbId === '' && $url === '') {
+
+    logDebug('Nenhum parâmetro recebido');
+
+    resposta([
+        'success' => false,
+        'message' => 'Informe tmdb_id ou url.',
+        'example' => '?tmdb_id=tt22084616&debug=1'
+    ], 400);
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -519,67 +407,68 @@ logDebug('Parâmetros recebidos', [
 |--------------------------------------------------------------------------
 */
 
-if ($tmdb_id !== '') {
+if ($tmdbId !== '') {
 
-    logDebug('MODO TMDB detectado');
+    logDebug('Modo TMDB ativado');
 
-    /*
-     * Validação básica.
-     *
-     * Aceitamos IDs no formato:
-     * tt1234567
-     */
+    if (!preg_match('/^tt\d+$/', $tmdbId)) {
 
-    if (
-        !preg_match(
-            '/^tt\d+$/i',
-            $tmdb_id
-        )
-    ) {
-
-        logDebug('TMDB ID inválido');
+        logDebug('TMDB ID parece inválido', [
+            'tmdb_id' => $tmdbId
+        ]);
 
         resposta([
             'success' => false,
-            'message' => 'TMDB ID inválido',
-            'tmdb_id' => $tmdb_id,
-            'debug' => $debugMode ? $debug : []
+            'message' => 'TMDB/IMDb ID inválido.',
+            'tmdb_id' => $tmdbId
         ], 400);
     }
 
-    $embedUrl =
-        'https://megaembed.com/embed/' .
-        rawurlencode($tmdb_id);
+    $embedUrl = 'https://megaembed.com/embed/' . rawurlencode($tmdbId);
 
-    logDebug('URL do embed montada', [
+    logDebug('URL do embed criada', [
         'embed_url' => $embedUrl
     ]);
 
-    /*
-     * IMPORTANTE:
-     *
-     * Fazemos uma tentativa apenas para diagnóstico.
-     *
-     * Não tentamos contornar Cloudflare.
-     */
+    logDebug('Tentando acessar o embed diretamente pelo servidor');
 
-    logDebug(
-        'Testando acessibilidade do embed pelo servidor'
-    );
-
-    $data = curlGet(
+    $resultado = curlGet(
         $embedUrl,
         'https://megaembed.com/'
     );
 
     /*
-     * CLOUDFLARE
-     */
+    |--------------------------------------------------------------------------
+    | ERRO CURL
+    |--------------------------------------------------------------------------
+    */
 
-    if ($data['cloudflare']) {
+    if (!$resultado['success']) {
+
+        logDebug('Não foi possível completar a requisição');
+
+        resposta([
+            'success' => false,
+            'message' => 'Erro ao acessar o embed pelo servidor.',
+            'reason' => 'curl_error',
+            'error' => $resultado['error'],
+            'http_code' => $resultado['http_code'],
+            'embed_url' => $embedUrl
+        ], 502);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | CLOUDFLARE
+    |--------------------------------------------------------------------------
+    */
+
+    if ($resultado['cloudflare']) {
+
+        logDebug('Cloudflare detectado');
 
         logDebug(
-            'Acesso bloqueado por proteção anti-bot'
+            'O servidor recebeu uma página de proteção em vez do HTML do embed'
         );
 
         resposta([
@@ -590,126 +479,149 @@ if ($tmdb_id !== '') {
 
             'reason' => 'cloudflare_challenge',
 
-            'http_code' => $data['code'],
+            'http_code' => $resultado['http_code'],
 
             'embed_url' => $embedUrl,
 
-            'content_size' =>
-                strlen($data['content']),
+            'content_type' => $resultado['content_type'],
 
-            /*
-             * Isto informa o frontend que
-             * ele precisa carregar o embed diretamente
-             * no navegador, se permitido pelo serviço.
-             */
+            'content_size' => strlen($resultado['content']),
 
-            'next_step' => 'load_embed_in_browser',
+            'next_step' =>
+                'O embed precisa ser carregado em um navegador ou acessado por uma API/endereço autorizado pelo provedor.'
+        ], 403);
+    }
 
-            'debug' => $debugMode ? $debug : []
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP DIFERENTE DE 200
+    |--------------------------------------------------------------------------
+    */
 
+    if ($resultado['http_code'] < 200 ||
+        $resultado['http_code'] >= 300) {
+
+        logDebug('Servidor respondeu com HTTP diferente de 2xx', [
+            'http_code' => $resultado['http_code']
+        ]);
+
+        resposta([
+            'success' => false,
+            'message' => 'O servidor do embed respondeu com erro HTTP.',
+            'reason' => 'http_error',
+            'http_code' => $resultado['http_code'],
+            'embed_url' => $embedUrl,
+            'content_size' => strlen($resultado['content'])
         ], 502);
     }
 
     /*
-     * OUTROS ERROS
-     */
+    |--------------------------------------------------------------------------
+    | EXTRAIR SOURCES
+    |--------------------------------------------------------------------------
+    */
 
-    if (!$data['success']) {
+    logDebug('HTML recebido. Iniciando extração');
 
-        logDebug(
-            'Falha ao acessar embed',
-            [
-                'http_code' => $data['code'],
-                'error' => $data['error']
-            ]
-        );
+    $extracao = extrairSources(
+        $resultado['content']
+    );
 
-        resposta([
-            'success' => false,
+    if (!$extracao['success']) {
 
-            'message' =>
-                'Não foi possível acessar o embed pelo servidor.',
-
-            'reason' => 'embed_request_failed',
-
-            'http_code' => $data['code'],
-
-            'error' => $data['error'],
-
-            'embed_url' => $embedUrl,
-
-            'debug' => $debugMode ? $debug : []
-
-        ], 502);
-    }
-
-    /*
-     * HTML ACESSÍVEL
-     */
-
-    logDebug('HTML do embed recebido');
-
-    $html = $data['content'];
-
-    /*
-     * Procura sources
-     */
-
-    $sources = extrairSources($html);
-
-    if (empty($sources)) {
-
-        logDebug(
-            'HTML foi recebido, mas nenhuma source válida foi encontrada'
-        );
+        logDebug('Não foi possível extrair sources', [
+            'reason' => $extracao['reason']
+        ]);
 
         resposta([
             'success' => false,
-
-            'message' =>
-                'O HTML foi acessado, mas nenhuma source válida foi encontrada.',
-
-            'reason' => 'sources_not_found',
-
-            'tmdb_id' => $tmdb_id,
-
+            'message' => 'HTML recebido, mas a variável sources não foi encontrada ou não pôde ser interpretada.',
+            'reason' => $extracao['reason'],
+            'http_code' => $resultado['http_code'],
             'embed_url' => $embedUrl,
-
-            'content_size' => strlen($html),
-
-            'sources' => [],
-
-            'total' => 0,
-
-            'debug' => $debugMode ? $debug : []
-
+            'content_size' => strlen($resultado['content'])
         ], 422);
     }
 
     /*
-     * SUCESSO
-     */
+    |--------------------------------------------------------------------------
+    | NORMALIZAR SOURCES
+    |--------------------------------------------------------------------------
+    */
 
-    logDebug(
-        'SUCESSO: sources encontradas',
-        [
-            'total' => count($sources)
-        ]
-    );
+    $sourcesFinal = [];
+
+    foreach ($extracao['sources'] as $index => $source) {
+
+        if (!is_array($source)) {
+
+            logDebug('Source ignorada porque não é objeto', [
+                'index' => $index
+            ]);
+
+            continue;
+        }
+
+        $file = isset($source['file'])
+            ? trim($source['file'])
+            : '';
+
+        $label = isset($source['label'])
+            ? trim($source['label'])
+            : '';
+
+        if ($file === '') {
+
+            logDebug('Source sem file ignorada', [
+                'index' => $index
+            ]);
+
+            continue;
+        }
+
+        $tipo = 'mp4';
+
+        if (stripos($file, '.m3u8') !== false) {
+            $tipo = 'hls';
+        }
+
+        $sourcesFinal[] = [
+            'file' => $file,
+            'label' => $label,
+            'type' => $tipo
+        ];
+
+        logDebug('Source adicionada', [
+            'index' => $index,
+            'file' => $file,
+            'label' => $label,
+            'type' => $tipo
+        ]);
+    }
+
+    if (count($sourcesFinal) === 0) {
+
+        logDebug('Nenhuma source válida encontrada');
+
+        resposta([
+            'success' => false,
+            'message' => 'A variável sources foi encontrada, mas nenhuma source válida foi extraída.',
+            'reason' => 'empty_sources',
+            'embed_url' => $embedUrl
+        ], 422);
+    }
+
+    logDebug('Processamento concluído com sucesso', [
+        'total_sources' => count($sourcesFinal)
+    ]);
 
     resposta([
         'success' => true,
-
         'message' => 'Sources encontradas com sucesso.',
-
-        'tmdb_id' => $tmdb_id,
-
-        'sources' => $sources,
-
-        'total' => count($sources),
-
-        'debug' => $debugMode ? $debug : []
-
+        'tmdb_id' => $tmdbId,
+        'embed_url' => $embedUrl,
+        'sources' => $sourcesFinal,
+        'total' => count($sourcesFinal)
     ]);
 }
 
@@ -719,208 +631,84 @@ if ($tmdb_id !== '') {
 |--------------------------------------------------------------------------
 */
 
-if ($url_direta !== '') {
+if ($url !== '') {
 
-    logDebug('MODO URL DIRETA detectado');
+    logDebug('Modo URL ativado', [
+        'url' => $url
+    ]);
 
-    /*
-     * Só aceitamos HTTP/HTTPS
-     */
+    if (!filter_var($url, FILTER_VALIDATE_URL)) {
 
-    $parsed = parse_url($url_direta);
-
-    if (
-        !$parsed ||
-        !isset($parsed['scheme']) ||
-        !in_array(
-            strtolower($parsed['scheme']),
-            ['http', 'https'],
-            true
-        )
-    ) {
-
-        logDebug('URL direta inválida');
+        logDebug('URL fornecida é inválida');
 
         resposta([
             'success' => false,
-            'message' => 'URL inválida. Use HTTP ou HTTPS.',
-            'debug' => $debugMode ? $debug : []
+            'message' => 'URL inválida.'
         ], 400);
     }
 
-    logDebug('Testando URL direta');
+    $resultado = curlGet($url);
 
-    $result = curlGet(
-        $url_direta,
-        'https://megaembed.com/'
-    );
-
-    /*
-     * Cloudflare
-     */
-
-    if ($result['cloudflare']) {
-
-        logDebug(
-            'URL direta retornou proteção Cloudflare'
-        );
+    if (!$resultado['success']) {
 
         resposta([
             'success' => false,
+            'message' => 'Erro ao acessar URL.',
+            'reason' => 'curl_error',
+            'error' => $resultado['error'],
+            'http_code' => $resultado['http_code']
+        ], 502);
+    }
 
-            'message' =>
-                'A URL retornou uma página de proteção do Cloudflare.',
+    if ($resultado['cloudflare']) {
 
+        logDebug('Cloudflare detectado na URL fornecida');
+
+        resposta([
+            'success' => false,
+            'message' => 'A URL retornou uma página de proteção do Cloudflare.',
             'reason' => 'cloudflare_challenge',
-
-            'http_code' => $result['code'],
-
-            'url' => $url_direta,
-
-            'debug' => $debugMode ? $debug : []
-
-        ], 502);
+            'http_code' => $resultado['http_code'],
+            'url' => $url,
+            'content_size' => strlen($resultado['content'])
+        ], 403);
     }
 
-    /*
-     * Erro HTTP
-     */
-
-    if (!$result['success']) {
-
-        logDebug(
-            'Falha na URL direta'
-        );
-
-        resposta([
-            'success' => false,
-
-            'message' =>
-                'Falha ao acessar a URL.',
-
-            'reason' => 'request_failed',
-
-            'http_code' => $result['code'],
-
-            'error' => $result['error'],
-
-            'debug' => $debugMode ? $debug : []
-
-        ], 502);
-    }
-
-    /*
-     * Tenta encontrar sources
-     */
-
-    $sources = extrairSources(
-        $result['content']
+    $extracao = extrairSources(
+        $resultado['content']
     );
 
-    if (!empty($sources)) {
-
-        logDebug(
-            'Sources encontradas na URL direta'
-        );
+    if ($extracao['success']) {
 
         resposta([
             'success' => true,
-
-            'message' =>
-                'Sources encontradas.',
-
-            'sources' => $sources,
-
-            'total' => count($sources),
-
-            'debug' => $debugMode ? $debug : []
-
+            'message' => 'Sources encontradas.',
+            'url' => $url,
+            'sources' => $extracao['sources'],
+            'total' => count($extracao['sources'])
         ]);
     }
-
-    /*
-     * Caso seja conteúdo de vídeo
-     */
-
-    $contentType = strtolower(
-        $result['content_type'] ?? ''
-    );
-
-    if (
-        str_contains($contentType, 'video/') ||
-        str_contains($contentType, 'mpegurl')
-    ) {
-
-        logDebug(
-            'Conteúdo identificado como mídia'
-        );
-
-        resposta([
-            'success' => true,
-
-            'message' =>
-                'URL de mídia acessível.',
-
-            'url' => $url_direta,
-
-            'content_type' =>
-                $result['content_type'],
-
-            'debug' => $debugMode ? $debug : []
-
-        ]);
-    }
-
-    /*
-     * HTML sem sources
-     */
-
-    logDebug(
-        'URL acessível, porém nenhuma source encontrada'
-    );
 
     resposta([
         'success' => false,
-
-        'message' =>
-            'A URL foi acessada, mas nenhuma source foi encontrada.',
-
-        'reason' => 'sources_not_found',
-
-        'url' => $url_direta,
-
-        'content_type' =>
-            $result['content_type'],
-
-        'content_size' =>
-            strlen($result['content']),
-
-        'debug' => $debugMode ? $debug : []
-
+        'message' => 'A página foi acessada, mas não foi possível encontrar sources.',
+        'reason' => $extracao['reason'],
+        'url' => $url,
+        'content_size' => strlen($resultado['content'])
     ], 422);
 }
 
 /*
 |--------------------------------------------------------------------------
-| NENHUM PARÂMETRO
+| FALLBACK
 |--------------------------------------------------------------------------
 */
 
-logDebug(
-    'Nenhum parâmetro recebido'
-);
+logDebug('Nenhum fluxo conseguiu processar a requisição');
 
 resposta([
     'success' => false,
+    'message' => 'Não foi possível processar a requisição.'
+], 500);
+?>
 
-    'message' =>
-        'Informe ?tmdb_id=ID ou ?url=LINK',
-
-    'exemplos' => [
-        '?tmdb_id=tt22084616',
-        '?url=https://exemplo.com/video.m3u8'
-    ],
-
-    'debug' => $debugMode ? $debug : []
-
-], 400);
