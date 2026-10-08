@@ -424,7 +424,7 @@ if ($tmdbId !== '') {
         ], 400);
     }
 
-    $embedUrl = 'https://megaembed.com/embed/' . rawurlencode($tmdbId);
+    $embedUrl = 'https://mgeb.site/embed/' . rawurlencode($tmdbId);
 
     logDebug('URL do embed criada', [
         'embed_url' => $embedUrl
@@ -434,7 +434,7 @@ if ($tmdbId !== '') {
 
     $resultado = curlGet(
         $embedUrl,
-        'https://megaembed.com/'
+        'https://mgeb.site/'
     );
 
     /*
