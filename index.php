@@ -50,7 +50,7 @@ $url_direta = trim($_GET['url'] ?? '');
 
 // ==================== MODO 1: Buscar fontes por TMDB ====================
 if (!empty($tmdb_id)) {
-    $embedUrl = 'https://megaembed.com/embed/' . $tmdb_id;
+    $embedUrl = 'https://ighgthhjiih.github.io/teste2/' . $tmdb_id;
     $data = curlGet($embedUrl);
 
     if (!$data['success'] || empty($data['content'])) {
@@ -89,7 +89,7 @@ if (!empty($tmdb_id)) {
 
 // ==================== MODO 2: PROXY DIRETO (Mais importante) ====================
 if (!empty($url_direta)) {
-    $result = curlGet($url_direta, 'https://d1muf25xa06so8hp24v.megaembed.com/');
+    $result = curlGet($url_direta, 'megaembed.com/');
     $result = curlGet($url_direta, 'https://megaembed.com/');
 
     if ($result['success'] && !empty($result['content'])) {
