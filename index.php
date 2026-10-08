@@ -3,13 +3,9 @@ header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
-header('Content-Type: application/json');
-
-// ==================== CONFIGURAÇÕES ====================
 define('TIMEOUT', 30);
 define('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
 
-// ==================== FUNÇÃO CURL ====================
 function curlGet($url, $referer = '') {
     $headers = [
         'User-Agent: ' . USER_AGENT,
@@ -17,7 +13,6 @@ function curlGet($url, $referer = '') {
         'Accept-Language: pt-BR,pt;q=0.9',
         'Connection: keep-alive',
     ];
-
     if (!empty($referer)) {
         $headers[] = 'Referer: ' . $referer;
     }
@@ -33,7 +28,6 @@ function curlGet($url, $referer = '') {
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $error = curl_error($ch);
-
     curl_close($ch);
 
     return [
@@ -44,20 +38,17 @@ function curlGet($url, $referer = '') {
     ];
 }
 
-// ==================== RECEBE PARÂMETROS ====================
+// ===== MODO API: só roda se vier ?tmdb_id= =====
 $tmdb_id = trim($_GET['tmdb_id'] ?? '');
-$url_direta = trim($_GET['url'] ?? '');
 
-// ==================== MODO 1: Buscar fontes por TMDB ====================
 if (!empty($tmdb_id)) {
+    header('Content-Type: application/json');
+
     $embedUrl = 'https://ighgthhjiih.github.io/teste2/' . $tmdb_id;
     $data = curlGet($embedUrl);
 
     if (!$data['success'] || empty($data['content'])) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'Erro ao acessar embed'
-        ]);
+        echo json_encode(['success' => false, 'message' => 'Erro ao acessar embed']);
         exit;
     }
 
@@ -86,44 +77,44 @@ if (!empty($tmdb_id)) {
     ]);
     exit;
 }
-
-// ==================== MODO 2: PROXY DIRETO (Mais importante) ====================
-if (!empty($url_direta)) {
-    $result = curlGet($url_direta, 'megaembed.com/');
-    $result = curlGet($url_direta, 'https://megaembed.com/');
-
-    if ($result['success'] && !empty($result['content'])) {
-
-        // Se for HLS (m3u8)
-        if (str_contains(strtolower($url_direta), '.m3u8')) {
-            header('Content-Type: application/vnd.apple.mpegurl');
-            echo $result['content'];
-        } 
-        // Se for MP4
-        else {
-            header('Content-Type: video/mp4');
-            header('Content-Length: ' . strlen($result['content']));
-            echo $result['content'];
-        }
-    } else {
-        http_response_code(404);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Falha ao carregar o vídeo'
-        ]);
-    }
-    exit;
-}
-
-// ==================== ERRO ====================
-echo json_encode([
-    'success' => false,
-    'message' => 'Use ?tmdb_id=ID ou ?url=LINK_DO_VIDEO'
-]);
 ?>
-<iframe
-    src="https://megaembed.com/embed/tt22084616"
-    width="100%" height="800"
-    frameborder="0"
-    allowfullscreen>
-</iframe>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Player</title>
+    <style>
+        body { margin: 0; background: #000; }
+        iframe { width: 100%; height: 100vh; border: 0; display: block; }
+        #sources { color: #fff; font-family: sans-serif; padding: 10px; }
+    </style>
+</head>
+<body>
+    <div id="sources">Carregando fontes...</div>
+
+    <iframe
+        src="https://megaembed.com/embed/tt22084616"
+        allowfullscreen>
+    </iframe>
+
+    <script>
+        // A API e a página são o mesmo arquivo:
+        // se a URL tem ?tmdb_id=, ela responde JSON.
+        fetch('/?tmdb_id=tt22084616')
+            .then(r => r.json())
+            .then(data => {
+                const box = document.getElementById('sources');
+                if (data.success) {
+                    box.textContent = data.sources
+                        .map(s => s.label + ' (' + s.type + ')')
+                        .join(' | ');
+                } else {
+                    box.textContent = 'Nenhuma fonte encontrada.';
+                }
+            })
+            .catch(() => {
+                document.getElementById('sources').textContent = 'Erro na API.';
+            });
+    </script>
+</body>
+</html>
