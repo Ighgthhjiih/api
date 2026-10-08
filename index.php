@@ -121,3 +121,9 @@ echo json_encode([
     'message' => 'Use ?tmdb_id=ID ou ?url=LINK_DO_VIDEO'
 ]);
 ?>
+<iframe
+    src="https://megaembed.com/embed/tt22084616"
+    width="100%" height="800"
+    frameborder="0"
+    allowfullscreen>
+</iframe>
