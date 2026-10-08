@@ -1,122 +1,180 @@
 <?php
+
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
+header('Content-Type: application/json; charset=utf-8');
 
-header('Content-Type: application/json');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
 
-// ==================== CONFIGURAÇÕES ====================
-define('TIMEOUT', 30);
-define('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+const TIMEOUT = 30;
 
-// ==================== FUNÇÃO CURL ====================
-function curlGet($url, $referer = '') {
-    $headers = [
-        'User-Agent: ' . USER_AGENT,
-        'Accept: */*',
-        'Accept-Language: pt-BR,pt;q=0.9',
-        'Connection: keep-alive',
-    ];
+function resposta($dados, $codigo = 200)
+{
+    http_response_code($codigo);
 
-    if (!empty($referer)) {
-        $headers[] = 'Referer: ' . $referer;
-    }
+    echo json_encode(
+        $dados,
+        JSON_UNESCAPED_SLASHES |
+        JSON_UNESCAPED_UNICODE
+    );
 
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, TIMEOUT);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_ENCODING, 'gzip, deflate');
+    exit;
+}
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    
+function buscarPagina($url)
+{
+    $ch = curl_init();
+
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => TIMEOUT,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_ENCODING => '',
+        CURLOPT_HTTPHEADER => [
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language: pt-BR,pt;q=0.9,en;q=0.8'
+        ]
+    ]);
+
+    $html = curl_exec($ch);
+
+    $erro = curl_error($ch);
+    $codigo = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
     curl_close($ch);
 
+    if ($html === false) {
+        return [
+            'success' => false,
+            'error' => $erro
+        ];
+    }
+
+    if ($codigo < 200 || $codigo >= 400) {
+        return [
+            'success' => false,
+            'error' => 'HTTP ' . $codigo
+        ];
+    }
+
     return [
-        'success' => ($httpCode >= 200 && $httpCode < 400),
-        'content' => $response,
-        'code' => $httpCode,
-        'error' => $error
+        'success' => true,
+        'html' => $html
     ];
 }
 
-// ==================== RECEBE PARÂMETROS ====================
-$tmdb_id = trim($_GET['tmdb_id'] ?? '');
-$url_direta = trim($_GET['url'] ?? '');
+function extrairSources($html)
+{
+    $padroes = [
+        '/(?:var|let|const)\s+sources\s*=\s*(\[[\s\S]*?\])\s*;/i',
+        '/sources\s*=\s*(\[[\s\S]*?\])\s*;/i'
+    ];
 
-// ==================== MODO 1: Buscar fontes por TMDB ====================
-if (!empty($tmdb_id)) {
-    $embedUrl = 'https://megaembed.com/embed/' . $tmdb_id;
-    $data = curlGet($embedUrl);
+    foreach ($padroes as $padrao) {
 
-    if (!$data['success'] || empty($data['content'])) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'Erro ao acessar embed'
-        ]);
-        exit;
-    }
+        if (!preg_match($padrao, $html, $matches)) {
+            continue;
+        }
 
-    $html = $data['content'];
-    $sources = [];
+        $json = trim($matches[1]);
 
-    if (preg_match('/var\s+sources\s*=\s*(\[[\s\S]*?\]);/', $html, $matches)) {
-        $decoded = json_decode($matches[1], true);
-        if (is_array($decoded)) {
-            foreach ($decoded as $item) {
-                if (!empty($item['file'])) {
-                    $sources[] = [
-                        'file' => $item['file'],
-                        'label' => $item['label'] ?? 'Servidor ' . (count($sources) + 1),
-                        'type' => str_contains(strtolower($item['file']), '.m3u8') ? 'hls' : 'mp4'
-                    ];
-                }
+        $sources = json_decode($json, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            continue;
+        }
+
+        if (!is_array($sources)) {
+            continue;
+        }
+
+        $resultado = [];
+
+        foreach ($sources as $source) {
+
+            if (!is_array($source)) {
+                continue;
             }
+
+            $file = trim($source['file'] ?? '');
+
+            if ($file === '') {
+                continue;
+            }
+
+            $resultado[] = [
+                'file' => $file,
+                'type' => $source['type'] ?? null,
+                'label' => $source['label'] ?? null
+            ];
+        }
+
+        if (!empty($resultado)) {
+            return $resultado;
         }
     }
 
-    echo json_encode([
-        'success' => !empty($sources),
-        'sources' => $sources,
-        'total' => count($sources)
-    ]);
-    exit;
+    return [];
 }
 
-// ==================== MODO 2: PROXY DIRETO (Mais importante) ====================
-if (!empty($url_direta)) {
-    $result = curlGet($url_direta, 'https://megaembed.com/');
+$url = trim($_GET['url'] ?? '');
 
-    if ($result['success'] && !empty($result['content'])) {
-        
-        // Se for HLS (m3u8)
-        if (str_contains(strtolower($url_direta), '.m3u8')) {
-            header('Content-Type: application/vnd.apple.mpegurl');
-            echo $result['content'];
-        } 
-        // Se for MP4
-        else {
-            header('Content-Type: video/mp4');
-            header('Content-Length: ' . strlen($result['content']));
-            echo $result['content'];
-        }
-    } else {
-        http_response_code(404);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Falha ao carregar o vídeo'
-        ]);
-    }
-    exit;
+if ($url === '') {
+    resposta([
+        'success' => false,
+        'message' => 'Informe a URL da página.'
+    ], 400);
 }
 
-// ==================== ERRO ====================
-echo json_encode([
-    'success' => false,
-    'message' => 'Use ?tmdb_id=ID ou ?url=LINK_DO_VIDEO'
+if (!filter_var($url, FILTER_VALIDATE_URL)) {
+    resposta([
+        'success' => false,
+        'message' => 'URL inválida.'
+    ], 400);
+}
+
+$pagina = buscarPagina($url);
+
+if (!$pagina['success']) {
+    resposta([
+        'success' => false,
+        'message' => 'Não foi possível acessar a página.',
+        'error' => $pagina['error']
+    ], 502);
+}
+
+$sources = extrairSources($pagina['html']);
+
+if (empty($sources)) {
+    resposta([
+        'success' => false,
+        'message' => 'A variável sources não foi encontrada ou não contém fontes válidas.',
+        'sources' => []
+    ], 404);
+}
+
+$resposta = [];
+
+foreach ($sources as $index => $source) {
+
+    $resposta[] = [
+        'index' => $index,
+        'file' => $source['file'],
+        'type' => $source['type'],
+        'label' => $source['label'] ?: 'Servidor ' . ($index + 1)
+    ];
+}
+
+resposta([
+    'success' => true,
+    'total' => count($resposta),
+    'sources' => $resposta
 ]);
 ?>
