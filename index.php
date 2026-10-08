@@ -38,7 +38,7 @@ function curlGet($url, $referer = '') {
     ];
 }
 
-// ===== MODO API: só roda se vier ?tmdb_id= =====
+// ===== MODO API: ?tmdb_id= responde JSON puro =====
 $tmdb_id = trim($_GET['tmdb_id'] ?? '');
 
 if (!empty($tmdb_id)) {
@@ -77,44 +77,41 @@ if (!empty($tmdb_id)) {
     ]);
     exit;
 }
+
+// ===== MESMA ROTA, SEM parâmetro: página com iframe oculto =====
+$embed_id = trim($_GET['embed'] ?? 'tt22084616');
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>Player</title>
-    <style>
-        body { margin: 0; background: #000; }
-        iframe { width: 100%; height: 100vh; border: 0; display: block; }
-        #sources { color: #fff; font-family: sans-serif; padding: 10px; }
-    </style>
+    <title>API + Embed</title>
 </head>
 <body>
-    <div id="sources">Carregando fontes...</div>
 
-    <iframe
-        src="https://megaembed.com/embed/tt22084616"
-        allowfullscreen>
-    </iframe>
+<pre id="json">Carregando...</pre>
 
-    <script>
-        // A API e a página são o mesmo arquivo:
-        // se a URL tem ?tmdb_id=, ela responde JSON.
-        fetch('/?tmdb_id=tt22084616')
-            .then(r => r.json())
-            .then(data => {
-                const box = document.getElementById('sources');
-                if (data.success) {
-                    box.textContent = data.sources
-                        .map(s => s.label + ' (' + s.type + ')')
-                        .join(' | ');
-                } else {
-                    box.textContent = 'Nenhuma fonte encontrada.';
-                }
-            })
-            .catch(() => {
-                document.getElementById('sources').textContent = 'Erro na API.';
-            });
-    </script>
+<!-- iframe oculto, mas carregando normalmente -->
+<iframe
+    src="https://megaembed.com/embed/<?= htmlspecialchars($embed_id) ?>"
+    width="0" height="0"
+    style="border:0; visibility:hidden; position:absolute;"
+    allowfullscreen
+    loading="eager">
+</iframe>
+
+<script>
+    // Consome a API na mesma rota, só que com ?tmdb_id=
+    fetch(location.pathname + '?tmdb_id=<?= urlencode($embed_id) ?>')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('json').textContent =
+                JSON.stringify(data, null, 2);
+        })
+        .catch(() => {
+            document.getElementById('json').textContent = 'Erro na API.';
+        });
+</script>
+
 </body>
 </html>
