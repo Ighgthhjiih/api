@@ -178,19 +178,23 @@ if (!empty($tmdb_id)) {
         'content_size' => strlen($data['content'])
     ]);
 
-    if (!$data['success'] || empty($data['content'])) {
+ if (!$data['success'] || empty($data['content'])) {
 
-        logDebug('PAROU: erro ao acessar o embed');
+    logDebug('Conteúdo retornado mesmo com erro HTTP', [
+        'inicio_html' => substr($data['content'], 0, 2000)
+    ]);
 
-        echo json_encode([
-            'success' => false,
-            'message' => 'Erro ao acessar embed',
-            'debug' => $debug
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Erro ao acessar embed',
+        'http_code' => $data['code'],
+        'content_size' => strlen($data['content']),
+        'html_inicio' => substr($data['content'], 0, 5000),
+        'debug' => $debug
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        exit;
-    }
-
+    exit;
+}
     logDebug('HTML recebido com sucesso');
 
     $html = $data['content'];
