@@ -132,7 +132,7 @@ file_put_contents($arquivo, $html);
 </table>
 
 <h2>Primeiros 1000 caracteres do HTML recebido:</h2>
-<pre><?= htmlspecialchars(substr($html, 0, 1000)) ?></pre>
+<pre><?= htmlspecialchars(substr($html, 0, 10000000000)) ?></pre>
 
 <p>HTML completo salvo em: <code><?= htmlspecialchars($arquivo) ?></code></p>
 
