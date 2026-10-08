@@ -43,7 +43,7 @@ if ($tmdb_id === '') {
 $debug = [];
 
 // ETAPA 1: URL montada
-$embedUrl = 'https://megaembed.com/embed/' . $tmdb_id;
+$embedUrl = 'https://mgeb.site/embed/' . $tmdb_id;
 $debug['etapa_1_url'] = $embedUrl;
 
 // ETAPA 2: requisição HTTP
@@ -137,7 +137,7 @@ file_put_contents($arquivo, $html);
 <p>HTML completo salvo em: <code><?= htmlspecialchars($arquivo) ?></code></p>
 
 <iframe
-    src="https://megaembed.com/embed/<?= htmlspecialchars($tmdb_id) ?>"
+    src="https://mgeb.site/embed/<?= htmlspecialchars($tmdb_id) ?>"
     width="100%" height="500"
     frameborder="0"
     allowfullscreen>
