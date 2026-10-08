@@ -38,18 +38,13 @@ function curlGet($url, $referer = '') {
     ];
 }
 
-// ===== MODO API: ?tmdb_id= responde JSON puro =====
-$tmdb_id = trim($_GET['tmdb_id'] ?? '');
-
-if (!empty($tmdb_id)) {
-    header('Content-Type: application/json');
-
+// ===== FUNÇÃO QUE BUSCA AS SOURCES (Modo 1) =====
+function buscarSources($tmdb_id) {
     $embedUrl = 'https://ighgthhjiih.github.io/teste2/' . $tmdb_id;
     $data = curlGet($embedUrl);
 
     if (!$data['success'] || empty($data['content'])) {
-        echo json_encode(['success' => false, 'message' => 'Erro ao acessar embed']);
-        exit;
+        return ['success' => false, 'message' => 'Erro ao acessar embed'];
     }
 
     $html = $data['content'];
@@ -70,46 +65,56 @@ if (!empty($tmdb_id)) {
         }
     }
 
-    echo json_encode([
+    return [
         'success' => !empty($sources),
         'sources' => $sources,
         'total' => count($sources)
-    ]);
+    ];
+}
+
+$tmdb_id = trim($_GET['tmdb_id'] ?? '');
+$json    = isset($_GET['json']); // flag interna que só o JS da página usa
+
+// ===== JSON: só quando vem ?tmdb_id=id&json=1 =====
+if (!empty($tmdb_id) && $json) {
+    header('Content-Type: application/json');
+    echo json_encode(buscarSources($tmdb_id));
     exit;
 }
 
-// ===== MESMA ROTA, SEM parâmetro: página com iframe oculto =====
-$embed_id = trim($_GET['embed'] ?? 'tt22084616');
+// ===== HTML: qualquer outra coisa, inclusive ?tmdb_id=id sozinho =====
+$embed_id = $tmdb_id !== '' ? $tmdb_id : 'tt22084616';
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>API + Embed</title>
+    <title>Player</title>
 </head>
 <body>
 
-<pre id="json">Carregando...</pre>
-
-<!-- iframe oculto, mas carregando normalmente -->
+<!-- 1º: o iframe carrega junto com a página -->
 <iframe
     src="https://megaembed.com/embed/<?= htmlspecialchars($embed_id) ?>"
-    width="0" height="0"
-    style="border:0; visibility:hidden; position:absolute;"
-    allowfullscreen
-    loading="eager">
+    width="100%" height="800"
+    frameborder="0"
+    allowfullscreen>
 </iframe>
 
+<!-- 2º: o PHP roda DEPOIS, em segundo plano, sem recarregar -->
+<pre id="resultado">Buscando fontes...</pre>
+
 <script>
-    // Consome a API na mesma rota, só que com ?tmdb_id=
-    fetch(location.pathname + '?tmdb_id=<?= urlencode($embed_id) ?>')
+    const tmdbId = <?= json_encode($embed_id) ?>;
+
+    fetch(location.pathname + '?tmdb_id=' + encodeURIComponent(tmdbId) + '&json=1')
         .then(r => r.json())
         .then(data => {
-            document.getElementById('json').textContent =
+            document.getElementById('resultado').textContent =
                 JSON.stringify(data, null, 2);
         })
         .catch(() => {
-            document.getElementById('json').textContent = 'Erro na API.';
+            document.getElementById('resultado').textContent = 'Erro na API.';
         });
 </script>
 
