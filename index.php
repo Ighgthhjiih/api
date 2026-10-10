@@ -1,122 +1,132 @@
+
 <?php
+header('Content-Type: application/json; charset=utf-8');
+
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
-header('Content-Type: application/json');
-
-// ==================== CONFIGURAÇÕES ====================
-define('TIMEOUT', 30);
-define('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-
-// ==================== FUNÇÃO CURL ====================
-function curlGet($url, $referer = '') {
-    $headers = [
-        'User-Agent: ' . USER_AGENT,
-        'Accept: */*',
-        'Accept-Language: pt-BR,pt;q=0.9',
-        'Connection: keep-alive',
-    ];
-
-    if (!empty($referer)) {
-        $headers[] = 'Referer: ' . $referer;
-    }
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, TIMEOUT);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_ENCODING, 'gzip, deflate');
-
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    
-    curl_close($ch);
-
-    return [
-        'success' => ($httpCode >= 200 && $httpCode < 400),
-        'content' => $response,
-        'code' => $httpCode,
-        'error' => $error
-    ];
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
 }
 
-// ==================== RECEBE PARÂMETROS ====================
-$tmdb_id = trim($_GET['tmdb_id'] ?? '');
-$url_direta = trim($_GET['url'] ?? '');
+// ==================== CONFIGURAÇÕES ====================
 
-// ==================== MODO 1: Buscar fontes por TMDB ====================
-if (!empty($tmdb_id)) {
-    $embedUrl = 'https://odkodkod.megaembed.com/embed/' . $tmdb_id;
-    $data = curlGet($embedUrl);
+// Configure estas variáveis no ambiente do servidor.
+$dominio = 'https://SEU_DOMINIO';
+$usuario = getenv('MEGAEMBED_USER');
+$senha = getenv('MEGAEMBED_PASSWORD');
 
-    if (!$data['success'] || empty($data['content'])) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'Erro ao acessar embed'
-        ]);
-        exit;
-    }
+// ==================== RECEBE O ID ====================
 
-    $html = $data['content'];
-    $sources = [];
+$id = trim($_GET['id'] ?? '');
 
-    if (preg_match('/var\s+sources\s*=\s*(\[[\s\S]*?\]);/', $html, $matches)) {
-        $decoded = json_decode($matches[1], true);
-        if (is_array($decoded)) {
-            foreach ($decoded as $item) {
-                if (!empty($item['file'])) {
-                    $sources[] = [
-                        'file' => $item['file'],
-                        'label' => $item['label'] ?? 'Servidor ' . (count($sources) + 1),
-                        'type' => str_contains(strtolower($item['file']), '.m3u8') ? 'hls' : 'mp4'
-                    ];
-                }
-            }
-        }
-    }
+if ($id === '' || !ctype_digit($id)) {
+    http_response_code(400);
 
     echo json_encode([
-        'success' => !empty($sources),
-        'sources' => $sources,
-        'total' => count($sources)
+        'success' => false,
+        'message' => 'Informe um ID válido. Exemplo: ?id=123'
     ]);
     exit;
 }
 
-// ==================== MODO 2: PROXY DIRETO (Mais importante) ====================
-if (!empty($url_direta)) {
-    $result = curlGet($url_direta, 'https://megaembed.com/');
+if (!$usuario || !$senha) {
+    http_response_code(500);
 
-    if ($result['success'] && !empty($result['content'])) {
-        
-        // Se for HLS (m3u8)
-        if (str_contains(strtolower($url_direta), '.m3u8')) {
-            header('Content-Type: application/vnd.apple.mpegurl');
-            echo $result['content'];
-        } 
-        // Se for MP4
-        else {
-            header('Content-Type: video/mp4');
-            header('Content-Length: ' . strlen($result['content']));
-            echo $result['content'];
-        }
-    } else {
-        http_response_code(404);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Falha ao carregar o vídeo'
-        ]);
-    }
+    echo json_encode([
+        'success' => false,
+        'message' => 'Credenciais da API não configuradas'
+    ]);
     exit;
 }
 
-// ==================== ERRO ====================
-echo json_encode([
-    'success' => false,
-    'message' => 'Use ?tmdb_id=ID ou ?url=LINK_DO_VIDEO'
+// ==================== CONSULTA A API XTREAM ====================
+
+$params = [
+    'username' => $usuario,
+    'password' => $senha,
+    'action' => 'get_vod_streams'
+];
+
+$url = rtrim($dominio, '/') . '/player_api.php?' .
+       http_build_query($params);
+
+$ch = curl_init($url);
+
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_FOLLOWLOCATION => false,
+    CURLOPT_SSL_VERIFYPEER => true,
+    CURLOPT_SSL_VERIFYHOST => 2,
+    CURLOPT_HTTPHEADER => [
+        'Accept: application/json'
+    ],
+    CURLOPT_USERAGENT => 'MegaEmbedClient/1.0'
 ]);
+
+$resposta = curl_exec($ch);
+$status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$erro = curl_error($ch);
+
+curl_close($ch);
+
+// ==================== VALIDA A RESPOSTA ====================
+
+if ($resposta === false || $status < 200 || $status >= 300) {
+    http_response_code(502);
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'Erro ao consultar a API MegaEmbed',
+        'status' => $status
+    ]);
+    exit;
+}
+
+$filmes = json_decode($resposta, true);
+
+if (!is_array($filmes) || json_last_error() !== JSON_ERROR_NONE) {
+    http_response_code(502);
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'A API retornou um JSON inválido'
+    ]);
+    exit;
+}
+
+// ==================== FILTRA SOMENTE O ID SOLICITADO ====================
+
+$filmeEncontrado = null;
+
+foreach ($filmes as $filme) {
+    if (
+        isset($filme['stream_id']) &&
+        (string) $filme['stream_id'] === $id
+    ) {
+        $filmeEncontrado = $filme;
+        break;
+    }
+}
+
+if ($filmeEncontrado === null) {
+    http_response_code(404);
+
+    echo json_encode([
+        'success' => false,
+        'message' => 'Filme não encontrado',
+        'id' => $id
+    ]);
+    exit;
+}
+
+// Retorna somente o filme encontrado.
+echo json_encode([
+    'success' => true,
+    'film' => $filmeEncontrado
+], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 ?>
