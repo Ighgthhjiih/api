@@ -50,7 +50,7 @@ $url_direta = trim($_GET['url'] ?? '');
 
 // ==================== MODO 1: Buscar fontes por TMDB ====================
 if (!empty($tmdb_id)) {
-    $embedUrl = 'https://megaembed.com/embed/' . $tmdb_id;
+    $embedUrl = 'https://odkodkod.megaembed.com/embed/' . $tmdb_id;
     $data = curlGet($embedUrl);
 
     if (!$data['success'] || empty($data['content'])) {
