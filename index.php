@@ -1,132 +1,291 @@
 
 <?php
-header('Content-Type: application/json; charset=utf-8');
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
+header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
 
-// ==================== CONFIGURAÇÕES ====================
+define('TIMEOUT', 30);
+define('USER_AGENT', 'Mozilla/5.0');
 
-// Configure estas variáveis no ambiente do servidor.
-$dominio = 'https://SEU_DOMINIO';
-$usuario = getenv('MEGAEMBED_USER');
-$senha = getenv('MEGAEMBED_PASSWORD');
+// =====================================================
+// CONFIGURAÇÕES
+// =====================================================
 
-// ==================== RECEBE O ID ====================
+$dominio = 'https://mgeb.site';
+$usuario = 'filmesssi';
+$senha = 'd1660c5ceca93149';
+$embedBase = 'https://megaembed.com/embed/';
 
-$id = trim($_GET['id'] ?? '');
+// =====================================================
+// FUNÇÃO CURL
+// =====================================================
 
-if ($id === '' || !ctype_digit($id)) {
-    http_response_code(400);
+function curlGet($url, $referer = '') {
+    $headers = [
+        'User-Agent: ' . USER_AGENT,
+        'Accept: */*',
+        'Accept-Language: pt-BR,pt;q=0.9'
+    ];
 
-    echo json_encode([
-        'success' => false,
-        'message' => 'Informe um ID válido. Exemplo: ?id=123'
-    ]);
-    exit;
-}
-
-if (!$usuario || !$senha) {
-    http_response_code(500);
-
-    echo json_encode([
-        'success' => false,
-        'message' => 'Credenciais da API não configuradas'
-    ]);
-    exit;
-}
-
-// ==================== CONSULTA A API XTREAM ====================
-
-$params = [
-    'username' => $usuario,
-    'password' => $senha,
-    'action' => 'get_vod_streams'
-];
-
-$url = rtrim($dominio, '/') . '/player_api.php?' .
-       http_build_query($params);
-
-$ch = curl_init($url);
-
-curl_setopt_array($ch, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_CONNECTTIMEOUT => 10,
-    CURLOPT_TIMEOUT => 30,
-    CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_SSL_VERIFYPEER => true,
-    CURLOPT_SSL_VERIFYHOST => 2,
-    CURLOPT_HTTPHEADER => [
-        'Accept: application/json'
-    ],
-    CURLOPT_USERAGENT => 'MegaEmbedClient/1.0'
-]);
-
-$resposta = curl_exec($ch);
-$status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$erro = curl_error($ch);
-
-curl_close($ch);
-
-// ==================== VALIDA A RESPOSTA ====================
-
-if ($resposta === false || $status < 200 || $status >= 300) {
-    http_response_code(502);
-
-    echo json_encode([
-        'success' => false,
-        'message' => 'Erro ao consultar a API MegaEmbed',
-        'status' => $status
-    ]);
-    exit;
-}
-
-$filmes = json_decode($resposta, true);
-
-if (!is_array($filmes) || json_last_error() !== JSON_ERROR_NONE) {
-    http_response_code(502);
-
-    echo json_encode([
-        'success' => false,
-        'message' => 'A API retornou um JSON inválido'
-    ]);
-    exit;
-}
-
-// ==================== FILTRA SOMENTE O ID SOLICITADO ====================
-
-$filmeEncontrado = null;
-
-foreach ($filmes as $filme) {
-    if (
-        isset($filme['stream_id']) &&
-        (string) $filme['stream_id'] === $id
-    ) {
-        $filmeEncontrado = $filme;
-        break;
+    if ($referer !== '') {
+        $headers[] = 'Referer: ' . $referer;
     }
+
+    $ch = curl_init($url);
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => TIMEOUT,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_USERAGENT => USER_AGENT
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+
+    curl_close($ch);
+
+    return [
+        'success' => $response !== false &&
+                     $httpCode >= 200 &&
+                     $httpCode < 300,
+        'content' => $response,
+        'code' => $httpCode,
+        'error' => $error
+    ];
 }
 
-if ($filmeEncontrado === null) {
-    http_response_code(404);
+// =====================================================
+// PARÂMETROS
+// =====================================================
+
+$tmdb_id = trim($_GET['tmdb_id'] ?? '');
+$url_direta = trim($_GET['url'] ?? '');
+
+// =====================================================
+// MODO 1: BUSCAR FILME NA API XTREAM
+// =====================================================
+
+if ($tmdb_id !== '') {
+
+    if (!ctype_digit($tmdb_id) || (int)$tmdb_id < 1) {
+        http_response_code(400);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'tmdb_id inválido'
+        ]);
+
+        exit;
+    }
+
+    if (
+        !$usuario ||
+        !$senha ||
+        !filter_var($dominio, FILTER_VALIDATE_URL) ||
+        str_contains($dominio, 'SEU_DOMINIO')
+    ) {
+        http_response_code(500);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Configure o domínio e as credenciais da API'
+        ]);
+
+        exit;
+    }
+
+    $apiUrl = rtrim($dominio, '/') . '/player_api.php?' .
+        http_build_query([
+            'username' => $usuario,
+            'password' => $senha,
+            'action' => 'get_vod_info',
+            'vod_id' => $tmdb_id
+        ]);
+
+    $data = curlGet($apiUrl);
+
+    if (!$data['success']) {
+        http_response_code(502);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Erro ao consultar a API Xtream',
+            'http_code' => $data['code']
+        ]);
+
+        exit;
+    }
+
+    $filme = json_decode($data['content'], true);
+
+    if (!is_array($filme) || empty($filme)) {
+        http_response_code(404);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Filme não encontrado',
+            'tmdb_id' => $tmdb_id
+        ]);
+
+        exit;
+    }
 
     echo json_encode([
-        'success' => false,
-        'message' => 'Filme não encontrado',
-        'id' => $id
-    ]);
+        'success' => true,
+        'tmdb_id' => $tmdb_id,
+        'film' => $filme
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
     exit;
 }
 
-// Retorna somente o filme encontrado.
+// =====================================================
+// MODO 2: BUSCAR FONTES NO EMBED PELO ID
+// =====================================================
+
+if (isset($_GET['embed_id']) && $_GET['embed_id'] !== '') {
+
+    $embed_id = trim($_GET['embed_id']);
+
+    if (!ctype_digit($embed_id)) {
+        http_response_code(400);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'embed_id inválido'
+        ]);
+
+        exit;
+    }
+
+    $embedUrl = $embedBase . rawurlencode($embed_id);
+    $data = curlGet($embedUrl);
+
+    if (!$data['success'] || empty($data['content'])) {
+        http_response_code(502);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Erro ao acessar o embed'
+        ]);
+
+        exit;
+    }
+
+    $sources = [];
+
+    if (preg_match(
+        '/var\s+sources\s*=\s*(\[[\s\S]*?\]);/',
+        $data['content'],
+        $matches
+    )) {
+        $decoded = json_decode($matches[1], true);
+
+        if (is_array($decoded)) {
+            foreach ($decoded as $item) {
+                if (!empty($item['file'])) {
+                    $sources[] = [
+                        'file' => $item['file'],
+                        'label' => $item['label'] ??
+                            'Servidor ' . (count($sources) + 1),
+                        'type' => preg_match(
+                            '/\.m3u8(?:$|[?#])/i',
+                            $item['file']
+                        ) ? 'hls' : 'video'
+                    ];
+                }
+            }
+        }
+    }
+
+    echo json_encode([
+        'success' => !empty($sources),
+        'sources' => $sources,
+        'total' => count($sources)
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    exit;
+}
+
+// =====================================================
+// MODO 3: PROXY DIRETO
+// =====================================================
+
+if ($url_direta !== '') {
+
+    $urlInfo = parse_url($url_direta);
+    $hostPermitido = parse_url($dominio, PHP_URL_HOST);
+
+    if (
+        !$urlInfo ||
+        ($urlInfo['scheme'] ?? '') !== 'https' ||
+        empty($urlInfo['host']) ||
+        !$hostPermitido ||
+        strcasecmp($urlInfo['host'], $hostPermitido) !== 0
+    ) {
+        http_response_code(400);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'URL inválida ou domínio não permitido'
+        ]);
+
+        exit;
+    }
+
+    $result = curlGet($url_direta);
+
+    if (!$result['success']) {
+        http_response_code(502);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Falha ao carregar o recurso',
+            'http_code' => $result['code']
+        ]);
+
+        exit;
+    }
+
+    $path = $urlInfo['path'] ?? '';
+
+    if (preg_match('/\.m3u8$/i', $path)) {
+        header('Content-Type: application/vnd.apple.mpegurl');
+    } else {
+        header('Content-Type: application/octet-stream');
+    }
+
+    echo $result['content'];
+    exit;
+}
+
+// =====================================================
+// PARÂMETROS AUSENTES
+// =====================================================
+
+http_response_code(400);
+
 echo json_encode([
-    'success' => true,
-    'film' => $filmeEncontrado
+    'success' => false,
+    'message' => 'Informe um parâmetro válido',
+    'examples' => [
+        '?tmdb_id=123',
+        '?embed_id=123',
+        '?url=https://SEU_DOMINIO/caminho-do-recurso'
+    ]
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
 ?>
