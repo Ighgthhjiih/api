@@ -1,15 +1,15 @@
-
 <?php
-
+// Não coloque espaços, HTML ou texto antes desta linha.
+header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
-header('Content-Type: application/json; charset=utf-8');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
+
 
 define('TIMEOUT', 30);
 define('USER_AGENT', 'Mozilla/5.0');
